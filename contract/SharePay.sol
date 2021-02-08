@@ -8,10 +8,11 @@ contract SharePay {
     using SafeMath for uint256;
 
     struct Invoice {
+        string uid;
         address token; //bnb: 0x1111111111111111111111111111111111111111
         uint256 cost;
         uint256 count;
-        address payable[] payers;
+        // address payable[] payers;
         uint8 status; // pending: 0 - done: 1 - reject: 2
         address creator;
     }
@@ -21,6 +22,8 @@ contract SharePay {
         bool active;
     }
 
+    mapping(uint256 => address payable[]) public payers;
+    mapping(string => Invoice) public uidInvoice;
     mapping(address => bool) public manager;
     Invoice[] public invoices;
 
@@ -44,44 +47,41 @@ contract SharePay {
         require(_token != address(0), "Token must not be null");
         require(!tokenPaymentData[_token].active, "Token is not added");
         tokenPayments.push(_token);
+        tokenPaymentData[_token].active = true;
     }
 
     function createInvoice(
+        string calldata uid,
         address _token,
         uint256 _cost,
         uint256 _count
     ) external onlyManager {
         require(tokenPaymentData[_token].active, "Token must be added");
-        invoices.push(
-            Invoice(
-                _token,
-                _cost,
-                _count,
-                new address payable[](0),
-                0,
-                msg.sender
-            )
-        );
+        Invoice memory _invoice =
+            Invoice(uid, _token, _cost, _count, 0, msg.sender);
+        invoices.push(_invoice);
+        uidInvoice[uid] = _invoice;
     }
 
     function payWithToken(uint256 _id) external {
         Invoice memory invoice = invoices[_id];
+
         IERC20(invoice.token).transferFrom(
             msg.sender,
             address(this),
             invoice.cost.div(invoice.count)
         );
-        invoice.payers[invoice.payers.length] = (msg.sender);
-        if (invoice.payers.length == invoice.count) {
-            invoice.status = 1;
+        payers[_id].push(msg.sender);
+        if (payers[_id].length == invoice.count) {
+            invoices[_id].status = 1;
         }
     }
 
     function pay(uint256 _id) external payable {
         Invoice memory invoice = invoices[_id];
         require(msg.value >= invoice.cost.div(invoice.count));
-        invoice.payers[invoice.payers.length] = (msg.sender);
-        if (invoice.payers.length == invoice.count) {
+        payers[_id].push(msg.sender);
+        if (payers[_id].length == invoice.count) {
             invoice.status = 1;
         }
     }
@@ -92,20 +92,19 @@ contract SharePay {
         if (
             invoice.token == address(0x1111111111111111111111111111111111111111)
         ) {
-            for (uint256 i = 0; i < invoice.payers.length; i++) {
+            for (uint256 i = 0; i < payers[_id].length; i++) {
                 IERC20(invoice.token).transfer(
-                    invoice.payers[i],
-                    invoice.cost.div(invoice.payers.length)
+                    payers[_id][i],
+                    invoice.cost.div(payers[_id].length)
                 );
             }
         } else {
-            for (uint256 i = 0; i < invoice.payers.length; i++) {
-                invoice.payers[i].transfer(
-                    invoice.cost.div(invoice.payers.length)
-                );
+            for (uint256 i = 0; i < payers[_id].length; i++) {
+                payers[_id][i].transfer(invoice.cost.div(payers[_id].length));
             }
         }
-        invoice.status = 2;
+        invoices[_id].status = 2;
+        uidInvoice[invoices[_id].uid].status = 2;
     }
 
     function getListPayments() public view returns (address[] memory) {
